@@ -1,0 +1,172 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "./AITU_SE2331.sol";
+
+contract AIModelMarketplace {
+    AITU_SE2331 public paymentToken;
+    
+    struct ModelBasicInfo {
+        string name;
+        string description;
+        uint256 price;
+        address payable creator;
+        bool isAvailable;
+    }
+    
+    struct ModelExtendedInfo {
+        string modelUri;
+        string sellerDetails; // Combines name and contact in JSON format
+        uint256 listingDate;
+        uint256 totalRating;    // Changed to uint256 for more flexibility
+        uint32 totalRaters;     // Changed to uint32, still plenty for raters
+        string lastTransactionTime;
+    }
+    
+    mapping(uint256 => ModelBasicInfo) public basicInfo;
+    mapping(uint256 => ModelExtendedInfo) public extendedInfo;
+    mapping(uint256 => mapping(address => bool)) public hasPurchased;
+    
+    uint256 public modelCount;
+    uint256[] private activeModels;
+    uint8 public constant MARKETPLACE_FEE_PERCENTAGE = 5;
+    
+    event ModelListed(uint256 indexed modelId, string name, uint256 price, address creator);
+    event ModelPurchased(uint256 indexed modelId, address buyer, uint256 price, string purchaseTime);
+    event ModelRated(uint256 indexed modelId, address rater, uint256 rating);
+    event ModelDelisted(uint256 indexed modelId);
+    
+    constructor(address _tokenAddress) {
+        paymentToken = AITU_SE2331(_tokenAddress);
+    }
+    
+    function listModel(
+        string calldata name,
+        string calldata description,
+        string calldata modelUri,
+        uint256 price,
+        string calldata sellerDetails
+    ) external {
+        require(bytes(name).length > 0, "Name required");
+        require(bytes(modelUri).length > 0, "URI required");
+        require(price > 0, "Price must be > 0");
+        
+        basicInfo[modelCount] = ModelBasicInfo({
+            name: name,
+            description: description,
+            price: price,
+            creator: payable(msg.sender),
+            isAvailable: true
+        });
+        
+        extendedInfo[modelCount] = ModelExtendedInfo({
+            modelUri: modelUri,
+            sellerDetails: sellerDetails,
+            listingDate: block.timestamp,
+            totalRating: 0,
+            totalRaters: 0,
+            lastTransactionTime: ""
+        });
+        
+        activeModels.push(modelCount);
+        
+        emit ModelListed(modelCount, name, price, msg.sender);
+        modelCount++;
+    }
+    
+    function getAllModels() external view returns (
+        uint256[] memory ids,
+        string[] memory names,
+        string[] memory descriptions,
+        uint256[] memory prices,
+        address[] memory creators,
+        bool[] memory available
+    ) {
+        uint256 length = activeModels.length;
+        ids = new uint256[](length);
+        names = new string[](length);
+        descriptions = new string[](length);
+        prices = new uint256[](length);
+        creators = new address[](length);
+        available = new bool[](length);
+        
+        for (uint256 i = 0; i < length; i++) {
+            uint256 modelId = activeModels[i];
+            ModelBasicInfo memory basic = basicInfo[modelId];
+            ids[i] = modelId;
+            names[i] = basic.name;
+            descriptions[i] = basic.description;
+            prices[i] = basic.price;
+            creators[i] = basic.creator;
+            available[i] = basic.isAvailable;
+        }
+    }
+    
+    function getModelDetails(uint256 modelId) external view returns (
+        ModelBasicInfo memory basic,
+        ModelExtendedInfo memory extended,
+        uint256 averageRating
+    ) {
+        require(modelId < modelCount, "Model doesn't exist");
+        basic = basicInfo[modelId];
+        extended = extendedInfo[modelId];
+        averageRating = extended.totalRaters > 0 ? extended.totalRating / extended.totalRaters : 0;
+    }
+    
+    function purchaseModel(uint256 modelId) external {
+        require(modelId < modelCount, "Model doesn't exist");
+        ModelBasicInfo storage basic = basicInfo[modelId];
+        require(basic.isAvailable, "Not available");
+        require(!hasPurchased[modelId][msg.sender], "Already purchased");
+        
+        uint256 marketplaceFee = (basic.price * MARKETPLACE_FEE_PERCENTAGE) / 100;
+        uint256 sellerAmount = basic.price - marketplaceFee;
+        
+        require(
+            paymentToken.transferFrom(msg.sender, address(this), marketplaceFee),
+            "Fee transfer failed"
+        );
+        require(
+            paymentToken.transferFrom(msg.sender, basic.creator, sellerAmount),
+            "Purchase transfer failed"
+        );
+        
+        ModelExtendedInfo storage extended = extendedInfo[modelId];
+        extended.lastTransactionTime = paymentToken.getLastTransactionTimestampFormatted();
+        hasPurchased[modelId][msg.sender] = true;
+        
+        emit ModelPurchased(modelId, msg.sender, basic.price, extended.lastTransactionTime);
+    }
+    
+    function rateModel(uint256 modelId, uint256 rating) external {
+        require(modelId < modelCount, "Model doesn't exist");
+        require(rating > 0 && rating <= 5, "Rating: 1-5");
+        require(hasPurchased[modelId][msg.sender], "Purchase first");
+        
+        ModelExtendedInfo storage extended = extendedInfo[modelId];
+        extended.totalRating += rating;
+        extended.totalRaters++;
+        
+        emit ModelRated(modelId, msg.sender, rating);
+    }
+    
+    function delistModel(uint256 modelId) external {
+        require(modelId < modelCount, "Model doesn't exist");
+        ModelBasicInfo storage basic = basicInfo[modelId];
+        require(basic.creator == msg.sender, "Only creator");
+        
+        basic.isAvailable = false;
+        emit ModelDelisted(modelId);
+    }
+    
+    function getModelURI(uint256 modelId) external view returns (string memory) {
+        require(modelId < modelCount, "Model doesn't exist");
+        require(hasPurchased[modelId][msg.sender], "Not purchased");
+        return extendedInfo[modelId].modelUri;
+    }
+    
+    function getPaymentTokenAddress() external view returns (address) {
+        return address(paymentToken);
+    }
+}
