@@ -88,9 +88,9 @@ To interact with this marketplace, you need:
 1. **Seller Lists a Model**:
    - The seller lists an AI model called "AI Art Generator" with a description and a price of 50 UGT tokens.
 
-   ![alt text](image.png)
+  ![alt text](image-3.png)
    
-   ![alt text](image-1.png)
+  ![alt text](image-2.png)
 2. **Buyer Purchases a Model**:
    - The buyer purchases the "AI Art Generator" by sending 50 UGT tokens to the seller's wallet.
 
